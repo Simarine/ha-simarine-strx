@@ -11,6 +11,7 @@
       "connectable": false
     }
   ],
+  "categories": ["water", "energy"],
   "codeowners": ["@daniSi90"],
   "config_flow": true,
   "dependencies": ["bluetooth"],

@@ -32,25 +32,25 @@ by hand with **Add integration → Simarine STRx**.
 In a Security mode Home Assistant asks for the encryption key. In the Simarine Connect app open
 Device Management → Broadcast Settings → Show Encryption Key and enter the 32 hexadecimal digits.
 
-| Broadcast mode  | Key | Home Assistant gets                                                                  |
-|-----------------|-----|--------------------------------------------------------------------------------------|
-| Open            | No  | Level and tank description                                                           |
-| Low Security    | Yes | Level and tank description                                                           |
-| Medium Security | Yes | Level. The tank description only for one minute after it changes, it is kept then   |
-| High Security   | Yes | Level. Volume, Tank volume and Tank type stay unknown                                |
-| Off             | -   | Nothing, Broadcast status shows Broadcast off                                        |
+| Broadcast mode  | Key | Home Assistant gets                                                     |
+|-----------------|-----|-------------------------------------------------------------------------|
+| Open            | No  | Level and tank description                                              |
+| Low Security    | Yes | Level and tank description                                              |
+| Medium Security | Yes | Level, and the tank description if caught in the minute after a change  |
+| High Security   | Yes | Level. Volume, Tank volume and Tank type stay unknown                   |
+| Off             | -   | Nothing, Broadcast status shows Broadcast off                           |
 
 ### Entities
 
-| Entity           | Description                                                                 |
-|------------------|-----------------------------------------------------------------------------|
-| Level            | Tank level in %                                                             |
-| Volume           | Liquid in the tank in L, level × tank volume                                |
-| Tank volume      | Tank volume set in the app (diagnostic)                                     |
-| Tank type        | Fresh water, gray water, black water, fuel or other (diagnostic)            |
-| Broadcast mode   | Off, High, Medium or Low security, or Open (diagnostic)                     |
-| Broadcast status | OK, or why there is no level, like Encryption key needed (diagnostic)       |
-| Signal strength  | RSSI in dBm (diagnostic, disabled by default)                               |
+| Entity           | Description                                                           |
+|------------------|-----------------------------------------------------------------------|
+| Level            | Tank level in %                                                       |
+| Volume           | Liquid in the tank in L, level × tank volume                          |
+| Tank volume      | Tank volume set in the app (diagnostic)                               |
+| Tank type        | Fresh water, gray water, black water, fuel or other (diagnostic)      |
+| Broadcast mode   | Off, High, Medium or Low security, or Open (diagnostic)               |
+| Broadcast status | OK, or why there is no level, like Encryption key needed (diagnostic) |
+| Signal strength  | RSSI in dBm (diagnostic, disabled by default)                         |
 
 ### Changing the mode or the key
 
