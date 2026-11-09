@@ -1,0 +1,251 @@
+"""The integration inside Home Assistant: discovery, key entry, reauth, repairs and the sensors."""
+
+import struct
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from bleak.backends.device import BLEDevice
+from habluetooth import BluetoothServiceInfoBleak
+from habluetooth.central_manager import get_manager
+from homeassistant import config_entries
+from homeassistant.components.bluetooth import MONOTONIC_TIME
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import issue_registry as ir
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.simarine_strx.const import CONF_ENCRYPTION_KEY, CONF_TANK, DOMAIN
+from custom_components.simarine_strx.strx import broadcast as strx
+
+ADDRESS = "AA:BB:CC:DD:EE:01"
+KEY = bytes.fromhex("4BD224860416877824974BAF9ED1E1E4")
+ADV = strx.ADVERTISING_UUID
+RSP = strx.SCAN_RESPONSE_UUID
+
+pytestmark = pytest.mark.usefixtures("enable_bluetooth")
+
+
+class Sim:
+    """Firmware side of one device."""
+
+    def __init__(self, mode=strx.BEACON_PLAIN, key=KEY, boot=7, msg=100, ccc=0, level=500,
+                 volume=200, tank_type=1):
+        self.mode, self.key, self.boot, self.msg, self.ccc = mode, key, boot, msg, ccc
+        self.level, self.volume, self.tank_type = level, volume, tank_type
+
+    def rsp(self):
+        return struct.pack("<BBBHBHHB", 1, 1, 9, 42, self.mode, self.boot, self.volume, self.tank_type)
+
+    def adv(self):
+        if self.mode in strx.BEACON_MODES_ENCRYPTED:
+            rsp = strx.parse_scan_response(self.rsp())
+            level_bytes, mic = strx.encrypt_level(self.key, rsp, self.msg, self.ccc, self.level)
+        else:
+            level = strx.LEVEL_INVALID if self.mode == strx.BEACON_OFF else self.level
+            level_bytes, mic = struct.pack("<H", level), bytes(4)
+        return self.msg.to_bytes(3, "little") + level_bytes + mic + bytes([self.ccc])
+
+
+class Radio:
+    """Scanner side, merges service data per address like habluetooth."""
+
+    def __init__(self, hass):
+        self.hass = hass
+        self.service_data = {}
+
+    async def hear(self, payloads):
+        self.service_data.update(payloads)
+        info = BluetoothServiceInfoBleak(
+            name=ADDRESS, address=ADDRESS, rssi=-61, manufacturer_data={},
+            service_data=dict(self.service_data), service_uuids=[], source="local",
+            device=BLEDevice(ADDRESS, None, None), advertisement=None, connectable=True,
+            time=MONOTONIC_TIME(), tx_power=None,
+        )
+        get_manager().scanner_adv_received(info)
+        await self.hass.async_block_till_done(wait_background_tasks=True)
+
+    async def both(self, sim):
+        await self.hear({ADV: sim.adv(), RSP: sim.rsp()})
+
+    async def adv(self, sim):
+        await self.hear({ADV: sim.adv()})
+
+
+def state(hass, key):
+    entity_id = {
+        "level": "sensor.str1_0042_level",
+        "volume": "sensor.str1_0042_volume",
+        "status": "sensor.str1_0042_broadcast_status",
+        "tank_type": "sensor.str1_0042_tank_type",
+        "mode": "sensor.str1_0042_broadcast_mode",
+        "total": "sensor.str1_0042_tank_volume",
+    }[key]
+    s = hass.states.get(entity_id)
+    return s.state if s else None
+
+
+async def add_entry(hass, key=None):
+    entry = MockConfigEntry(domain=DOMAIN, version=2, unique_id=ADDRESS, title="STR1-0042",
+                            data={CONF_ENCRYPTION_KEY: key.hex() if key else None, "product_type": 1})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def test_discovery_plain(hass):
+    radio = Radio(hass)
+    sim = Sim()
+    await radio.both(sim)
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert len(flows) == 1
+    assert flows[0]["step_id"] == "bluetooth_confirm"
+    assert flows[0]["context"]["title_placeholders"] == {"name": "STR1-0042"}
+
+    result = await hass.config_entries.flow.async_configure(flows[0]["flow_id"], {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "STR1-0042"
+    assert result["data"] == {CONF_ENCRYPTION_KEY: None, "product_type": 1}
+    await hass.async_block_till_done()
+
+    sim.msg += 1
+    await radio.both(sim)
+    assert state(hass, "level") == "50.0"
+    assert state(hass, "volume") == "100.0"
+    assert state(hass, "status") == "ok"
+    assert state(hass, "tank_type") == "fresh_water"
+    assert state(hass, "mode") == "open"
+    assert state(hass, "total") == "200"
+
+
+async def test_discovery_encrypted_key(hass):
+    radio = Radio(hass)
+    sim = Sim(mode=strx.BEACON_LOW_SECURITY)
+    await radio.both(sim)
+    flow = hass.config_entries.flow.async_progress_by_handler(DOMAIN)[0]
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], {})
+    assert result["step_id"] == "get_encryption_key"
+
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], {CONF_ENCRYPTION_KEY: "zz"})
+    assert result["errors"] == {CONF_ENCRYPTION_KEY: "invalid_key_format"}
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], {CONF_ENCRYPTION_KEY: "00" * 16})
+    assert result["errors"] == {CONF_ENCRYPTION_KEY: "decryption_failed"}
+    result = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], {CONF_ENCRYPTION_KEY: "4BD2 2486 0416 8778 2497 4BAF 9ED1 E1E4"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_ENCRYPTION_KEY] == KEY.hex()
+    await hass.async_block_till_done()
+
+    sim.msg += 1
+    sim.level = 250
+    await radio.both(sim)
+    assert state(hass, "level") == "25.0"
+    assert state(hass, "status") == "ok"
+
+
+async def test_mode_change_requests_scan_then_reauth(hass):
+    radio = Radio(hass)
+    sim = Sim()
+    with patch("homeassistant.components.bluetooth.async_request_active_scan", AsyncMock()) as scan:
+        entry = await add_entry(hass)
+        await radio.both(sim)
+        sim.msg += 5
+        await radio.adv(sim)
+        assert state(hass, "level") == "50.0"
+        scan.assert_not_called()
+
+        # Switched to Low Security in the app, the new scan response is not in yet
+        sim.mode, sim.ccc = strx.BEACON_LOW_SECURITY, 1
+        sim.msg += 1
+        await radio.adv(sim)
+        assert state(hass, "status") == "waiting_scan_response"
+        assert state(hass, "volume") == "unknown"
+        scan.assert_called_once()
+
+        await radio.both(sim)
+        assert state(hass, "status") == "key_needed"
+        flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        assert len(flows) == 1
+        assert flows[0]["context"]["source"] == config_entries.SOURCE_REAUTH
+        assert flows[0]["step_id"] == "get_encryption_key"
+
+        result = await hass.config_entries.flow.async_configure(flows[0]["flow_id"], {CONF_ENCRYPTION_KEY: KEY.hex()})
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        await hass.async_block_till_done()
+        assert entry.data[CONF_ENCRYPTION_KEY] == KEY.hex()
+
+        sim.msg += 1
+        await radio.both(sim)
+        assert state(hass, "level") == "50.0"
+        assert state(hass, "status") == "ok"
+
+
+async def test_downgrade_issue_cleared_by_reconfigure(hass):
+    radio = Radio(hass)
+    sim = Sim(mode=strx.BEACON_PLAIN)
+    entry = await add_entry(hass, KEY)
+    await radio.both(sim)
+    assert state(hass, "status") == "downgrade_rejected"
+    assert state(hass, "level") == "unknown"
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, "encryption_downgrade_aabbccddee01")
+
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["step_id"] == "reconfigure"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+    assert entry.data[CONF_ENCRYPTION_KEY] is None
+    assert not registry.async_get_issue(DOMAIN, "encryption_downgrade_aabbccddee01")
+
+    sim.msg += 1
+    await radio.both(sim)
+    assert state(hass, "level") == "50.0"
+
+
+async def test_medium_window_description_persisted(hass):
+    radio = Radio(hass)
+    sim = Sim(mode=strx.BEACON_MED_SECURITY, ccc=3)
+    entry = await add_entry(hass, KEY)
+    await radio.both(sim)
+    assert entry.data[CONF_TANK] == {"volume_total": 200, "tank_type": 1, "config_change_counter": 3}
+
+    sim.msg += 1
+    sim.volume, sim.tank_type = 0xFFFF, 0xFF
+    await radio.both(sim)
+    assert state(hass, "total") == "200"
+    assert state(hass, "volume") == "100.0"
+
+    # Survives a reload with the fields still withheld
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    sim.msg += 1
+    await radio.both(sim)
+    assert state(hass, "total") == "200"
+
+
+async def test_user_flow(hass):
+    radio = Radio(hass)
+    await radio.both(Sim())
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["step_id"] == "user"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"address": ADDRESS})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "STR1-0042"
+
+
+async def test_user_flow_nothing_found(hass):
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_devices_found"
+
+
+async def test_old_hub_entry_not_migrated(hass):
+    entry = MockConfigEntry(domain=DOMAIN, version=1, unique_id=DOMAIN, title="Simarine STRx", data={})
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR

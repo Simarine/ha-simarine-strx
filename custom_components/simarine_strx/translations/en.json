@@ -1,0 +1,103 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "description": "Choose the STRx device to set up.",
+        "data": {
+          "address": "Device"
+        }
+      },
+      "bluetooth_confirm": {
+        "description": "Set up {name}?\n\nBroadcast mode: **{mode}**. The tank level is only broadcast while Broadcast Mode is on in the Simarine Connect app, under Device Management → Broadcast Settings."
+      },
+      "get_encryption_key": {
+        "title": "Encryption key",
+        "description": "{name} encrypts its broadcast. In the Simarine Connect app open Device Management → Broadcast Settings → Show Encryption Key and enter the 32 hexadecimal digits shown there.\n\nRegenerate Encryption Key and a factory reset replace the key, it then has to be entered again here.",
+        "data": {
+          "encryption_key": "Encryption key"
+        }
+      },
+      "reconfigure": {
+        "title": "Encryption key",
+        "description": "Change the encryption key of {name}.\n\nLeave it empty if the device broadcasts in Open mode on purpose. While a key is set, an unencrypted broadcast is rejected.",
+        "data": {
+          "encryption_key": "Encryption key"
+        }
+      }
+    },
+    "error": {
+      "no_scan_response": "No scan response received from the device. Make sure it is in range, that no other host is connected to it, and that a Bluetooth adapter or proxy can scan actively.",
+      "invalid_key_format": "The key must be 32 hexadecimal digits.",
+      "decryption_failed": "The key does not decrypt the broadcast. Check that it is the current key shown in the app."
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "already_in_progress": "Configuration flow is already in progress",
+      "no_devices_found": "No STRx devices found in range",
+      "unsupported_protocol": "The device uses a protocol version this integration does not support. Update the integration.",
+      "reauth_successful": "The encryption key was updated",
+      "reconfigure_successful": "The encryption key was updated"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "level": {
+        "name": "Level"
+      },
+      "volume": {
+        "name": "Volume"
+      },
+      "tank_volume_total": {
+        "name": "Tank volume"
+      },
+      "tank_type": {
+        "name": "Tank type",
+        "state": {
+          "other": "Other",
+          "fresh_water": "Fresh water",
+          "gray_water": "Gray water",
+          "black_water": "Black water",
+          "fuel": "Fuel"
+        }
+      },
+      "broadcast_mode": {
+        "name": "Broadcast mode",
+        "state": {
+          "off": "Off",
+          "high_security": "High security",
+          "medium_security": "Medium security",
+          "low_security": "Low security",
+          "open": "Open"
+        }
+      },
+      "status": {
+        "name": "Broadcast status",
+        "state": {
+          "ok": "OK",
+          "waiting_scan_response": "Waiting for scan response",
+          "no_measurement": "No measurement",
+          "broadcast_off": "Broadcast off",
+          "key_needed": "Encryption key needed",
+          "key_rejected": "Encryption key rejected",
+          "downgrade_rejected": "Unencrypted broadcast rejected",
+          "unsupported_protocol": "Unsupported protocol",
+          "unknown_mode": "Unknown broadcast mode"
+        }
+      },
+      "rssi": {
+        "name": "Signal strength"
+      }
+    }
+  },
+  "issues": {
+    "encryption_downgrade": {
+      "title": "{name} stopped encrypting its broadcast",
+      "description": "{name} has an encryption key but now broadcasts its level unencrypted (Open). The level is ignored, since an unencrypted broadcast can be forged.\n\nIf you switched the device to Open on purpose, reconfigure it and clear the encryption key. Otherwise choose a Security mode again in the Simarine Connect app."
+    },
+    "unsupported_protocol": {
+      "title": "{name} uses an unsupported protocol",
+      "description": "{name} broadcasts a protocol major version this integration does not support. Update the Simarine STRx integration."
+    }
+  }
+}

@@ -1,0 +1,8 @@
+default_config:
+
+bluetooth:
+
+logger:
+  default: info
+  logs:
+    custom_components.simarine_strx: debug
