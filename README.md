@@ -75,11 +75,6 @@ Device Management → Broadcast Settings → Show Encryption Key and enter the 3
       custom_components.simarine_strx: debug
   ```
 
-## Upgrading from 0.1
-
-The single "Simarine STRx" entry of 0.1 cannot be migrated. Delete it after updating, each meter then
-shows up as discovered.
-
 ## Protocol
 
 The broadcast is described in [strx-ble-broadcast-protocol](https://github.com/Simarine/strx-ble-broadcast-protocol).

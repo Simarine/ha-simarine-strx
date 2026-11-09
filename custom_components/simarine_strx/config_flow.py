@@ -56,7 +56,7 @@ def _scan_response(info: BluetoothServiceInfoBleak | None) -> strx.ScanResponse 
 class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
     """One config entry per STRx device, keyed by its address."""
 
-    VERSION = 2
+    VERSION = 1
 
     def __init__(self) -> None:
         self._address: str | None = None

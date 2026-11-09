@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .coordinator import STRxCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
 
@@ -32,14 +28,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: STRxConfigEntry) -> boo
     if unloaded:
         entry.runtime_data.async_delete_issues()
     return unloaded
-
-
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """The version 1 entry covered every device at once and cannot be carried over."""
-    if entry.version == 1:
-        _LOGGER.error(
-            "The old Simarine STRx entry cannot be migrated: delete it, every STRx "
-            "device is now discovered and added on its own"
-        )
-        return False
-    return True

@@ -10,7 +10,6 @@ from habluetooth import BluetoothServiceInfoBleak
 from habluetooth.central_manager import get_manager
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import MONOTONIC_TIME
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -86,7 +85,7 @@ def state(hass, key):
 
 
 async def add_entry(hass, key=None):
-    entry = MockConfigEntry(domain=DOMAIN, version=2, unique_id=ADDRESS, title="STR1-0042",
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=ADDRESS, title="STR1-0042",
                             data={CONF_ENCRYPTION_KEY: key.hex() if key else None, "product_type": 1})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -241,11 +240,3 @@ async def test_user_flow_nothing_found(hass):
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_devices_found"
-
-
-async def test_old_hub_entry_not_migrated(hass):
-    entry = MockConfigEntry(domain=DOMAIN, version=1, unique_id=DOMAIN, title="Simarine STRx", data={})
-    entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    assert entry.state is ConfigEntryState.MIGRATION_ERROR
