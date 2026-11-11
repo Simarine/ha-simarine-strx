@@ -22,23 +22,37 @@ from homeassistant.components.bluetooth import (
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
+    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    OptionsFlow,
 )
-from homeassistant.const import CONF_ADDRESS
+from homeassistant.const import CONF_ADDRESS, UnitOfVolume
 from homeassistant.core import callback
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .const import (
     BROADCAST_STALE_SECONDS,
     CONF_ENCRYPTION_KEY,
+    CONF_MANUAL,
+    CONF_MANUAL_TYPE,
+    CONF_MANUAL_VOLUME,
     CONF_PRODUCT_TYPE,
     CONF_TANK,
     DOMAIN,
+    MANUAL_VOLUME_MAX,
     SCAN_RESPONSE_TIMEOUT,
 )
 from .scanning import active_scan, scanning_actively
 from .strx import broadcast as strx
-from .strx.device import SUPPORTED_PROTOCOL_MAJOR, STRxDevice
+from .strx.device import SUPPORTED_PROTOCOL_MAJOR, TANK_TYPE_KEYS, STRxDevice
 
 # BEACON_MODE as the Simarine Connect app names it
 MODE_NAMES = {
@@ -70,6 +84,12 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
     """One config entry per STRx device, keyed by its address."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Tank description entered by hand."""
+        return STRxOptionsFlow()
 
     def __init__(self) -> None:
         self._address: str | None = None
@@ -345,3 +365,50 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
             return "unknown"
         mode = self._scan_response.beacon_mode
         return MODE_NAMES.get(mode, f"0x{mode:02x}")
+
+
+MANUAL_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_MANUAL, default=False): bool,
+        vol.Optional(CONF_MANUAL_VOLUME): NumberSelector(
+            NumberSelectorConfig(
+                min=1, max=MANUAL_VOLUME_MAX, step=1,
+                unit_of_measurement=UnitOfVolume.LITERS, mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(CONF_MANUAL_TYPE): SelectSelector(
+            SelectSelectorConfig(
+                options=list(TANK_TYPE_KEYS.values()),
+                translation_key=CONF_MANUAL_TYPE,
+                mode=SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    }
+)
+
+
+class STRxOptionsFlow(OptionsFlow):
+    """Tank volume and tank type entered by hand, for while the meter sends none."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Toggle and values in one form."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            volume = user_input.get(CONF_MANUAL_VOLUME)
+            tank_type = user_input.get(CONF_MANUAL_TYPE)
+            if user_input[CONF_MANUAL] and volume is None and tank_type is None:
+                errors["base"] = "manual_empty"
+            else:
+                options: dict[str, Any] = {CONF_MANUAL: user_input[CONF_MANUAL]}
+                if volume is not None:
+                    options[CONF_MANUAL_VOLUME] = int(volume)
+                if tank_type is not None:
+                    options[CONF_MANUAL_TYPE] = tank_type
+                return self.async_create_entry(data=options)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(MANUAL_SCHEMA, user_input or self.config_entry.options),
+            description_placeholders={"name": self.config_entry.title},
+            errors=errors,
+        )

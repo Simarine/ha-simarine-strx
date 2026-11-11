@@ -32,7 +32,7 @@ from .strx import broadcast as strx
 from .strx import device as strx_device
 
 # ENUM sensor options by protocol value
-TANK_TYPE_OPTIONS = {value: name.lower() for value, name in strx.TANK_TYPE_NAMES.items()}
+TANK_TYPE_OPTIONS = strx_device.TANK_TYPE_KEYS
 BROADCAST_MODE_OPTIONS = {
     strx.BEACON_OFF: "off",
     strx.BEACON_HIGH_SECURITY: "high_security",
@@ -49,6 +49,8 @@ class STRxSensorDescription(SensorEntityDescription):
     value_fn: Callable[[STRxCoordinator], StateType]
     # Stored rather than live: stays available while the device is out of range or not heard yet
     available_offline: bool = False
+    # Where the value comes from, shown as the source attribute
+    source_fn: Callable[[STRxCoordinator], str | None] | None = None
 
 
 SENSORS: tuple[STRxSensorDescription, ...] = (
@@ -78,6 +80,7 @@ SENSORS: tuple[STRxSensorDescription, ...] = (
         suggested_display_precision=0,
         value_fn=lambda c: c.device.tank_volume_total,
         available_offline=True,
+        source_fn=lambda c: c.device.tank_volume_source,
     ),
     STRxSensorDescription(
         key="tank_type",
@@ -87,6 +90,7 @@ SENSORS: tuple[STRxSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: TANK_TYPE_OPTIONS.get(c.device.tank_type),
         available_offline=True,
+        source_fn=lambda c: c.device.tank_type_source,
     ),
     STRxSensorDescription(
         key="broadcast_mode",
@@ -163,3 +167,11 @@ class STRxSensor(PassiveBluetoothCoordinatorEntity[STRxCoordinator], SensorEntit
     def native_value(self) -> StateType:
         """Current value from the device state."""
         return self.entity_description.value_fn(self.coordinator)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        """Whether the value comes from the meter or was entered by hand."""
+        if self.entity_description.source_fn is None:
+            return None
+        source = self.entity_description.source_fn(self.coordinator)
+        return {"source": source} if source else None

@@ -14,7 +14,14 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.simarine_strx.const import CONF_ENCRYPTION_KEY, CONF_TANK, DOMAIN
+from custom_components.simarine_strx.const import (
+    CONF_ENCRYPTION_KEY,
+    CONF_MANUAL,
+    CONF_MANUAL_TYPE,
+    CONF_MANUAL_VOLUME,
+    CONF_TANK,
+    DOMAIN,
+)
 from custom_components.simarine_strx.strx import broadcast as strx
 
 ADDRESS = "AA:BB:CC:DD:EE:01"
@@ -344,3 +351,33 @@ async def test_tank_description_outlasts_device(hass):
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert state(hass, "total") == "200"
+
+
+async def test_manual_tank_description(hass):
+    radio = Radio(hass)
+    entry = await add_entry(hass, KEY)
+    await radio.both(Sim(mode=strx.BEACON_HIGH_SECURITY, volume=0xFFFF, tank_type=0xFF))
+    assert state(hass, "total") == "unknown"
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["step_id"] == "init"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {CONF_MANUAL: True})
+    assert result["errors"] == {"base": "manual_empty"}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_MANUAL: True, CONF_MANUAL_VOLUME: 400.0, CONF_MANUAL_TYPE: "fuel"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options == {CONF_MANUAL: True, CONF_MANUAL_VOLUME: 400, CONF_MANUAL_TYPE: "fuel"}
+    assert state(hass, "total") == "400"
+    assert state(hass, "tank_type") == "fuel"
+    assert state(hass, "volume") == "200.0"
+    assert hass.states.get("sensor.str1_0042_tank_volume").attributes["source"] == "manual"
+
+    # Turned off, the values are kept for later
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_MANUAL: False, CONF_MANUAL_VOLUME: 400, CONF_MANUAL_TYPE: "fuel"})
+    await hass.async_block_till_done()
+    assert entry.options[CONF_MANUAL_VOLUME] == 400
+    assert state(hass, "total") == "unknown"
+    assert state(hass, "volume") == "unknown"

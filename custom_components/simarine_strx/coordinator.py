@@ -21,6 +21,9 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     ACTIVE_SCAN_INTERVAL,
     CONF_ENCRYPTION_KEY,
+    CONF_MANUAL,
+    CONF_MANUAL_TYPE,
+    CONF_MANUAL_VOLUME,
     CONF_TANK,
     DOMAIN,
     ISSUE_DOWNGRADE,
@@ -39,6 +42,9 @@ STATUS_ISSUES = {
     strx_device.STATUS_DOWNGRADE_REJECTED: ISSUE_DOWNGRADE,
     strx_device.STATUS_UNSUPPORTED_PROTOCOL: ISSUE_UNSUPPORTED,
 }
+
+# TANK_TYPE by its key in the options
+TANK_TYPE_VALUES = {key: value for value, key in strx_device.TANK_TYPE_KEYS.items()}
 
 
 class STRxCoordinator(PassiveBluetoothDataUpdateCoordinator):
@@ -62,6 +68,16 @@ class STRxCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self._status: str | None = None
         self._last_scan_request: float | None = None
         self._scan_task: asyncio.Task[None] | None = None
+        self.async_apply_options()
+
+    @callback
+    def async_apply_options(self) -> None:
+        """Take the tank description entered by hand from the options, notify the entities."""
+        options = self.entry.options
+        manual = options.get(CONF_MANUAL, False)
+        self.device.manual_volume_total = options.get(CONF_MANUAL_VOLUME) if manual else None
+        self.device.manual_tank_type = TANK_TYPE_VALUES.get(options.get(CONF_MANUAL_TYPE)) if manual else None
+        self.async_update_listeners()
 
     @callback
     def _async_handle_bluetooth_event(self, service_info: BluetoothServiceInfoBleak,

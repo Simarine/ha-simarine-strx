@@ -8,6 +8,12 @@ CONF_ENCRYPTION_KEY = "encryption_key"
 CONF_PRODUCT_TYPE = "product_type"
 CONF_TANK = "tank"
 
+# Options: tank description entered by hand, used while the meter sends none
+CONF_MANUAL = "manual_tank"
+CONF_MANUAL_VOLUME = "tank_volume"
+CONF_MANUAL_TYPE = "tank_type"
+MANUAL_VOLUME_MAX = 65534
+
 # Seconds the config flow waits for a scan response
 SCAN_RESPONSE_TIMEOUT = 10
 

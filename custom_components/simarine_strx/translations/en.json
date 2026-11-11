@@ -41,6 +41,26 @@
       "reconfigure_successful": "The encryption key was updated"
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tank description",
+        "description": "Tank volume and tank type of {name} entered by hand. While turned on they replace what the meter sends, a field left empty keeps the meter's value. Useful in High Security, where the meter never sends them, and in Medium Security until Home Assistant catches the six minutes after a change.",
+        "data": {
+          "manual_tank": "Enter the tank description by hand",
+          "tank_volume": "Tank volume",
+          "tank_type": "Tank type"
+        },
+        "data_description": {
+          "manual_tank": "Turn off to use what the meter sends again, the values below are kept.",
+          "tank_volume": "Full tank volume, as set in the Simarine Connect app."
+        }
+      }
+    },
+    "error": {
+      "manual_empty": "Enter a tank volume, a tank type or both."
+    }
+  },
   "entity": {
     "sensor": {
       "level": {
@@ -99,6 +119,17 @@
     "unsupported_protocol": {
       "title": "{name} uses an unsupported protocol",
       "description": "{name} broadcasts a protocol major version this integration does not support. Update the Simarine STRx integration."
+    }
+  },
+  "selector": {
+    "tank_type": {
+      "options": {
+        "other": "Other",
+        "fresh_water": "Fresh water",
+        "gray_water": "Gray water",
+        "black_water": "Black water",
+        "fuel": "Fuel"
+      }
     }
   }
 }

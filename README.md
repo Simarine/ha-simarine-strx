@@ -45,6 +45,18 @@ connected, so the key cannot be checked.
 The tank description is stored, so Tank volume and Tank type keep their values while the meter is out
 of range and across restarts of Home Assistant.
 
+### Entering the tank description by hand
+
+In High Security the meter never sends its tank volume and tank type, and in Medium Security only for a
+while after a change. To have them anyway, or to use other values than the ones set in the app, open
+the device's entry under **Settings → Devices & services → Simarine STRx → Configure**, turn on
+**Enter the tank description by hand** and enter the tank volume and tank type.
+
+- While turned on, the values entered by hand replace what the meter sends. A field left empty keeps
+  the meter's value.
+- The `source` attribute of Tank volume and Tank type says which one is shown: `manual` or `meter`.
+- Turning it off goes back to what the meter sends and keeps the entered values for later.
+
 ### Entities
 
 | Entity           | Description                                                           |

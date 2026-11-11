@@ -69,6 +69,13 @@ STATUSES = (
 # Modes whose scan response always carries the tank description in plaintext
 DESCRIPTION_PLAIN_MODES = (strx.BEACON_OFF, strx.BEACON_LOW_SECURITY, strx.BEACON_PLAIN)
 
+# TANK_TYPE by key, as stored and shown
+TANK_TYPE_KEYS = {value: name.lower() for value, name in strx.TANK_TYPE_NAMES.items()}
+
+# Where a tank volume or tank type comes from
+SOURCE_METER = "meter"
+SOURCE_MANUAL = "manual"
+
 
 @dataclass(frozen=True)
 class TankDescription:
@@ -160,6 +167,9 @@ class STRxDevice:
         self.name = name
         self.key = key
         self.description = description
+        # Entered by hand, replace what the meter sends
+        self.manual_volume_total: Optional[int] = None
+        self.manual_tank_type: Optional[int] = None
         self.scan_response: Optional[strx.ScanResponse] = None
         self.advertisement: Optional[strx.Advertisement] = None
         self.protocol_major: Optional[int] = None
@@ -247,15 +257,35 @@ class STRxDevice:
 
     @property
     def tank_volume_total(self) -> Optional[int]:
-        """Total tank volume in liters, None if unknown or withheld."""
+        """Total tank volume in liters, entered by hand or else from the meter, None if unknown."""
+        if self.manual_volume_total is not None:
+            return self.manual_volume_total
         description = self.tank_description
         return description.volume_total if description else None
 
     @property
+    def tank_volume_source(self) -> Optional[str]:
+        """SOURCE_MANUAL or SOURCE_METER for tank_volume_total, None if unknown."""
+        if self.manual_volume_total is not None:
+            return SOURCE_MANUAL
+        description = self.tank_description
+        return SOURCE_METER if description is not None and description.volume_total is not None else None
+
+    @property
     def tank_type(self) -> Optional[int]:
-        """TANK_TYPE, None if unknown or withheld."""
+        """TANK_TYPE, entered by hand or else from the meter, None if unknown."""
+        if self.manual_tank_type is not None:
+            return self.manual_tank_type
         description = self.tank_description
         return description.tank_type if description else None
+
+    @property
+    def tank_type_source(self) -> Optional[str]:
+        """SOURCE_MANUAL or SOURCE_METER for tank_type, None if unknown."""
+        if self.manual_tank_type is not None:
+            return SOURCE_MANUAL
+        description = self.tank_description
+        return SOURCE_METER if description is not None and description.tank_type is not None else None
 
     @property
     def beacon_mode(self) -> Optional[int]:

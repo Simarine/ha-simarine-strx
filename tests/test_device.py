@@ -502,6 +502,40 @@ class TestStoredDescription:
         assert host.device.tank_volume_total is None
 
 
+class TestManualDescription:
+    def test_used_while_withheld(self):
+        host = Host(key=KEY)
+        host.device.manual_volume_total, host.device.manual_tank_type = 400, 0x04
+        host.hear_both(Sim(mode=strx.BEACON_HIGH_SECURITY, volume=0xFFFF, tank_type=0xFF))
+        d = host.device
+        assert (d.tank_volume_total, d.tank_volume_source) == (400, dev.SOURCE_MANUAL)
+        assert (d.tank_type, d.tank_type_source) == (0x04, dev.SOURCE_MANUAL)
+        assert d.volume_l == 200.0
+
+    def test_replaces_what_the_meter_sends(self):
+        host = Host(key=KEY)
+        host.device.manual_volume_total, host.device.manual_tank_type = 400, 0x04
+        host.hear_both(Sim(mode=strx.BEACON_LOW_SECURITY))
+        d = host.device
+        assert (d.tank_volume_total, d.tank_volume_source) == (400, dev.SOURCE_MANUAL)
+        assert (d.tank_type, d.tank_type_source) == (0x04, dev.SOURCE_MANUAL)
+        assert d.volume_l == 200.0
+
+    def test_empty_field_keeps_the_meter_value(self):
+        host = Host()
+        host.device.manual_volume_total = 400
+        host.hear_both(Sim())
+        d = host.device
+        assert (d.tank_volume_total, d.tank_volume_source) == (400, dev.SOURCE_MANUAL)
+        assert (d.tank_type, d.tank_type_source) == (0x01, dev.SOURCE_METER)
+
+    def test_nothing_known(self):
+        host = Host(key=KEY)
+        host.hear_both(Sim(mode=strx.BEACON_HIGH_SECURITY, volume=0xFFFF, tank_type=0xFF))
+        assert host.device.tank_volume_source is None
+        assert host.device.tank_type_source is None
+
+
 class TestUnparsable:
     def test_unknown_mode(self):
         host = Host()
