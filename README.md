@@ -88,8 +88,8 @@ pip install -r requirements_test.txt      # Home Assistant test harness, Python 
 python -m pytest                          # also runs the Home Assistant tests in tests/ha
 ```
 
-To release, set `version` in `custom_components/simarine_strx/manifest.json` and publish a GitHub
-release with the tag `v<version>`. HACS shows the tag of the latest release.
+Testing on a Home Assistant instance, releasing and publishing are described in
+[MAINTAINING.md](MAINTAINING.md).
 
 ## License
 
