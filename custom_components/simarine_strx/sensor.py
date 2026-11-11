@@ -47,6 +47,8 @@ class STRxSensorDescription(SensorEntityDescription):
     """Sensor description with the function reading its value."""
 
     value_fn: Callable[[STRxCoordinator], StateType]
+    # Stored rather than live: stays available while the device is out of range or not heard yet
+    available_offline: bool = False
 
 
 SENSORS: tuple[STRxSensorDescription, ...] = (
@@ -75,6 +77,7 @@ SENSORS: tuple[STRxSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         suggested_display_precision=0,
         value_fn=lambda c: c.device.tank_volume_total,
+        available_offline=True,
     ),
     STRxSensorDescription(
         key="tank_type",
@@ -83,6 +86,7 @@ SENSORS: tuple[STRxSensorDescription, ...] = (
         options=list(TANK_TYPE_OPTIONS.values()),
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: TANK_TYPE_OPTIONS.get(c.device.tank_type),
+        available_offline=True,
     ),
     STRxSensorDescription(
         key="broadcast_mode",
@@ -147,6 +151,13 @@ class STRxSensor(PassiveBluetoothCoordinatorEntity[STRxCoordinator], SensorEntit
             manufacturer=MANUFACTURER,
             model=strx.PRODUCT_NAMES.get(entry.data.get(CONF_PRODUCT_TYPE), "STRx"),
         )
+
+    @property
+    def available(self) -> bool:
+        """Live values follow the device, a stored tank description outlasts it."""
+        if self.entity_description.available_offline and self.native_value is not None:
+            return True
+        return super().available
 
     @property
     def native_value(self) -> StateType:

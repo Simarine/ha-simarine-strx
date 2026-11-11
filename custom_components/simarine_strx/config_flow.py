@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import asyncio
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant.components.bluetooth import (
+    MONOTONIC_TIME,
     BluetoothCallbackMatcher,
+    BluetoothChange,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
     async_last_service_info,
     async_process_advertisements,
+    async_register_callback,
 )
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
@@ -22,10 +26,19 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
 )
 from homeassistant.const import CONF_ADDRESS
+from homeassistant.core import callback
 
-from .const import CONF_ENCRYPTION_KEY, CONF_PRODUCT_TYPE, DOMAIN, SCAN_RESPONSE_TIMEOUT
+from .const import (
+    BROADCAST_STALE_SECONDS,
+    CONF_ENCRYPTION_KEY,
+    CONF_PRODUCT_TYPE,
+    CONF_TANK,
+    DOMAIN,
+    SCAN_RESPONSE_TIMEOUT,
+)
+from .scanning import active_scan, scanning_actively
 from .strx import broadcast as strx
-from .strx.device import SUPPORTED_PROTOCOL_MAJOR
+from .strx.device import SUPPORTED_PROTOCOL_MAJOR, STRxDevice
 
 # BEACON_MODE as the Simarine Connect app names it
 MODE_NAMES = {
@@ -63,6 +76,17 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
         self._title: str | None = None
         self._scan_response: strx.ScanResponse | None = None
         self._discovered: dict[str, str] = {}
+        self._device: STRxDevice | None = None
+        self._cancel_follow: Callable[[], None] | None = None
+        self._scan_task: asyncio.Task[None] | None = None
+
+    @callback
+    def async_remove(self) -> None:
+        """Stop following the device once the flow is gone."""
+        if self._cancel_follow is not None:
+            self._cancel_follow()
+            self._cancel_follow = None
+        super().async_remove()
 
     # Discovery
 
@@ -71,6 +95,7 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._address = discovery_info.address
+        self._async_follow()
         self._scan_response = _scan_response(discovery_info) or await self._async_wait_scan_response()
         self.context["title_placeholders"] = {"name": self._name()}
         return await self.async_step_bluetooth_confirm()
@@ -99,6 +124,7 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
             self._address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(self._address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
+            self._async_follow()
             self._scan_response = await self._async_wait_scan_response()
             if self._scan_response is not None:
                 return await self._async_step_device()
@@ -134,7 +160,7 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
         """Encryption key shown in the Simarine Connect app."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            key, error = self._validate_key(user_input[CONF_ENCRYPTION_KEY])
+            key, error = await self._async_validate_key(user_input[CONF_ENCRYPTION_KEY])
             if error is None:
                 return self._async_finish(key)
             errors[CONF_ENCRYPTION_KEY] = error
@@ -163,7 +189,7 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
             text = user_input.get(CONF_ENCRYPTION_KEY, "").strip()
             if not text:
                 return self._async_finish(None)
-            key, error = self._validate_key(text)
+            key, error = await self._async_validate_key(text)
             if error is None:
                 return self._async_finish(key)
             errors[CONF_ENCRYPTION_KEY] = error
@@ -192,12 +218,43 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._get_reconfigure_entry(), data_updates={CONF_ENCRYPTION_KEY: key}
             )
         rsp = self._scan_response
-        return self.async_create_entry(
-            title=rsp.display_name,
-            data={CONF_ENCRYPTION_KEY: key, CONF_PRODUCT_TYPE: rsp.product_type},
+        data: dict[str, Any] = {CONF_ENCRYPTION_KEY: key, CONF_PRODUCT_TYPE: rsp.product_type}
+        if self._device is not None and self._device.description is not None:
+            # Medium Security shows it only for a while after a change, which may be over by now
+            data[CONF_TANK] = self._device.description.as_dict()
+        return self.async_create_entry(title=rsp.display_name, data=data)
+
+    @callback
+    def _async_follow(self) -> None:
+        """Follow the device while the flow runs, so a tank description it broadcasts meanwhile is kept."""
+        if self._cancel_follow is not None:
+            return
+        self._device = STRxDevice(self._address)
+        # Called at once with the last advertisement, which asks for an active scan
+        self._cancel_follow = async_register_callback(
+            self.hass,
+            self._async_heard,
+            BluetoothCallbackMatcher(address=self._address, connectable=False),
+            BluetoothScanningMode.ACTIVE,
         )
 
-    def _validate_key(self, text: str) -> tuple[str | None, str | None]:
+    @callback
+    def _async_heard(self, service_info: BluetoothServiceInfoBleak, change: BluetoothChange) -> None:
+        """One advertisement of the followed device."""
+        result = self._device.update(service_info.service_data, MONOTONIC_TIME(),
+                                     scanning_actively(self.hass, service_info))
+        if result.scan_now:
+            self._async_active_scan()
+
+    @callback
+    def _async_active_scan(self) -> None:
+        """Start an on-demand active scan unless one is running."""
+        if self._scan_task is not None and not self._scan_task.done():
+            return
+        if (scan := active_scan(self.hass, self._name())) is not None:
+            self._scan_task = self.hass.async_create_background_task(scan, f"{DOMAIN} active scan {self._address}")
+
+    async def _async_validate_key(self, text: str) -> tuple[str | None, str | None]:
         """
         Check the format of a key and, when the broadcast allows it, that it decrypts.
 
@@ -211,7 +268,14 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
             key = strx.key_from_hex(text)
         except ValueError:
             return None, "invalid_key_format"
-        if self._key_verifies(key) is False:
+        verdict = self._key_verifies(key)
+        if verdict is False:
+            if not self._broadcasting():
+                return None, "not_broadcasting"
+            # The cached scan response may predate a reboot or a mode change
+            await self._async_fresh_scan_response()
+            verdict = self._key_verifies(key)
+        if verdict is False:
             return None, "decryption_failed"
         return key.hex(), None
 
@@ -230,6 +294,27 @@ class SimarineSTRxConfigFlow(ConfigFlow, domain=DOMAIN):
             # The device could not encrypt, nothing to verify against
             return None
         return strx.decrypt_level(key, rsp, adv) is not None
+
+    def _broadcasting(self) -> bool:
+        """Whether the device advertised moments ago, it goes quiet while the app is connected to it."""
+        info = async_last_service_info(self.hass, self._address, connectable=False)
+        return info is not None and MONOTONIC_TIME() - info.time <= BROADCAST_STALE_SECONDS
+
+    async def _async_fresh_scan_response(self) -> None:
+        """Wait for a scan response other than the cached one, asking for an active scan."""
+        info = async_last_service_info(self.hass, self._address, connectable=False)
+        cached = info.service_data.get(strx.SCAN_RESPONSE_UUID) if info else None
+        self._async_active_scan()
+        try:
+            await async_process_advertisements(
+                self.hass,
+                lambda info: info.service_data.get(strx.SCAN_RESPONSE_UUID) not in (None, cached),
+                BluetoothCallbackMatcher(address=self._address, connectable=False),
+                BluetoothScanningMode.ACTIVE,
+                SCAN_RESPONSE_TIMEOUT,
+            )
+        except TimeoutError:
+            pass
 
     async def _async_wait_scan_response(self) -> strx.ScanResponse | None:
         """Scan response of the device, asking for an active scan if none is cached."""

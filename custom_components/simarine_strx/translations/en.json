@@ -13,7 +13,7 @@
       },
       "get_encryption_key": {
         "title": "Encryption key",
-        "description": "{name} encrypts its broadcast. In the Simarine Connect app open Device Management → Broadcast Settings → Show Encryption Key and enter the 32 hexadecimal digits shown there.\n\nRegenerate Encryption Key and a factory reset replace the key, it then has to be entered again here.",
+        "description": "{name} encrypts its broadcast. In the Simarine Connect app open Device Management → Broadcast Settings → Show Encryption Key and enter the 32 hexadecimal digits shown there. Disconnect the app before you submit: the meter does not broadcast while the app is connected, so the key cannot be checked.\n\nRegenerate Encryption Key and a factory reset replace the key, it then has to be entered again here.",
         "data": {
           "encryption_key": "Encryption key"
         }
@@ -29,7 +29,8 @@
     "error": {
       "no_scan_response": "No scan response received from the device. Make sure it is in range, that no other host is connected to it, and that a Bluetooth adapter or proxy can scan actively.",
       "invalid_key_format": "The key must be 32 hexadecimal digits.",
-      "decryption_failed": "The key does not decrypt the broadcast. Check that it is the current key shown in the app."
+      "decryption_failed": "The key does not decrypt the broadcast. Check that it is the current key shown in the app.",
+      "not_broadcasting": "{name} is not broadcasting right now, most likely because the Simarine Connect app is still connected to it. Disconnect the app and submit again."
     },
     "abort": {
       "already_configured": "Device is already configured",

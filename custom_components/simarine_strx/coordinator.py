@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import time
-from collections.abc import Awaitable, Callable
 
-from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import (
+    MONOTONIC_TIME,
     BluetoothChange,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
@@ -20,7 +19,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (
-    ACTIVE_SCAN_DURATION,
     ACTIVE_SCAN_INTERVAL,
     CONF_ENCRYPTION_KEY,
     CONF_TANK,
@@ -28,6 +26,7 @@ from .const import (
     ISSUE_DOWNGRADE,
     ISSUE_UNSUPPORTED,
 )
+from .scanning import active_scan, scanning_actively
 from .strx import device as strx_device
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,15 +61,17 @@ class STRxCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.rssi: int | None = None
         self._status: str | None = None
         self._last_scan_request: float | None = None
+        self._scan_task: asyncio.Task[None] | None = None
 
     @callback
     def _async_handle_bluetooth_event(self, service_info: BluetoothServiceInfoBleak,
                                       change: BluetoothChange) -> None:
         """Feed one callback into the state machine, then notify the entities."""
         self.rssi = service_info.rssi
-        result = self.device.update(service_info.service_data)
+        result = self.device.update(service_info.service_data, MONOTONIC_TIME(),
+                                    scanning_actively(self.hass, service_info))
         if result.request_scan:
-            self._async_request_active_scan()
+            self._async_request_active_scan(result.scan_now)
         if result.description_changed:
             self._async_store_description()
         if self.device.status != self._status:
@@ -106,27 +107,28 @@ class STRxCoordinator(PassiveBluetoothDataUpdateCoordinator):
                 ir.async_delete_issue(self.hass, DOMAIN, self._issue_id(issue))
 
     @callback
-    def _async_request_active_scan(self) -> None:
-        """Ask for an active scan so the new scan response arrives, at most once per interval."""
-        request: Callable[..., Awaitable[None]] | None = getattr(bluetooth, "async_request_active_scan", None)
-        if request is None:
+    def _async_request_active_scan(self, now: bool) -> None:
+        """
+        Ask for an active scan so the current scan response arrives.
+
+        Args:
+            now: Something just changed: ask right away unless a scan is running,
+                otherwise at most once per ACTIVE_SCAN_INTERVAL
+        """
+        if self._scan_task is not None and not self._scan_task.done():
+            return
+        started = MONOTONIC_TIME()
+        if (not now and self._last_scan_request is not None
+                and started - self._last_scan_request < ACTIVE_SCAN_INTERVAL):
+            return
+        if (scan := active_scan(self.hass, self.entry.title)) is None:
             # Older Home Assistant: the ACTIVE registration is all there is
             return
-        now = time.monotonic()
-        if self._last_scan_request is not None and now - self._last_scan_request < ACTIVE_SCAN_INTERVAL:
-            return
-        self._last_scan_request = now
-        _LOGGER.debug("%s: scan response out of date, requesting an active scan", self.entry.title)
-        self.entry.async_create_background_task(
-            self.hass, self._async_active_scan(request), f"{DOMAIN} active scan {self.address}"
+        self._last_scan_request = started
+        _LOGGER.debug("%s: requesting an active scan", self.entry.title)
+        self._scan_task = self.entry.async_create_background_task(
+            self.hass, scan, f"{DOMAIN} active scan {self.address}"
         )
-
-    async def _async_active_scan(self, request: Callable[..., Awaitable[None]]) -> None:
-        """Run one active scan, a failure only delays the scan response."""
-        try:
-            await request(self.hass, duration=ACTIVE_SCAN_DURATION)
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("%s: active scan request failed", self.entry.title, exc_info=True)
 
     @callback
     def _async_store_description(self) -> None:

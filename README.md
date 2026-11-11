@@ -31,14 +31,19 @@ by hand with **Add integration → Simarine STRx**.
 
 In a Security mode Home Assistant asks for the encryption key. In the Simarine Connect app open
 Device Management → Broadcast Settings → Show Encryption Key and enter the 32 hexadecimal digits.
+Disconnect the app before submitting the key: the meter does not broadcast while the app is
+connected, so the key cannot be checked.
 
 | Broadcast mode  | Key | Home Assistant gets                                                     |
 |-----------------|-----|-------------------------------------------------------------------------|
 | Open            | No  | Level and tank description                                              |
 | Low Security    | Yes | Level and tank description                                              |
-| Medium Security | Yes | Level, and the tank description if caught in the minute after a change  |
+| Medium Security | Yes | Level, and the tank description it sends for 6 minutes after a change   |
 | High Security   | Yes | Level. Volume, Tank volume and Tank type stay unknown                   |
 | Off             | -   | Nothing, Broadcast status shows Broadcast off                           |
+
+The tank description is stored, so Tank volume and Tank type keep their values while the meter is out
+of range and across restarts of Home Assistant.
 
 ### Entities
 
@@ -67,6 +72,15 @@ Device Management → Broadcast Settings → Show Encryption Key and enter the 3
   Settings → Devices & services → Bluetooth → the adapter → Configure and turn passive scanning off.
   For an ESPHome proxy set `bluetooth_proxy: active: true`. The meter also stops broadcasting while
   the app is connected to it.
+- **"Not broadcasting right now" when entering the key**: the app is still connected to the meter.
+  Disconnect it and submit again.
+- **Medium Security, Tank volume stays unknown**: the meter sends the tank description only for six
+  minutes of broadcasting after the volume, the tank type or the mode changes. Home Assistant scans
+  for it as soon as it notices the change, and its regular scan every five minutes falls into that
+  window too. A meter switched to Medium Security before Home
+  Assistant knew it has nothing to send until the next change: in the app switch to another
+  broadcast mode and back to Medium Security while Home Assistant is running. Saving unchanged
+  settings does not count as a change.
 - **Debug log:**
 
   ```yaml

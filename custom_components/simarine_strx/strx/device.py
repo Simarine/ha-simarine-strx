@@ -30,9 +30,18 @@ LEVEL_MAX = 1000
 # Distinct messages failing the MIC under an up to date scan response before the key is asked again
 MIC_FAIL_REAUTH = 30
 
-# Messages after a scan response was adopted within which a CONFIG_CHANGE_COUNTER
-# change is taken as the missed advertisement of that same scan response
-REBIND_MESSAGES = 2
+# Seconds of active scanning under one CONFIG_CHANGE_COUNTER after which the scan
+# response in hand is the current one: the device advertises at least every 250 ms
+# and an active scanner asks for the scan response on each advertisement
+CONFIRM_SECONDS = 3.0
+
+# Seconds without a callback after which the device counts as having been away:
+# connected to the app, out of range or rebooting
+SILENCE_SECONDS = 10.0
+
+# Seconds a scan response may have arrived before the first advertising packet with
+# its CONFIG_CHANGE_COUNTER, for the scanner missing the packet that went out with it
+REBIND_SECONDS = 2.0
 
 # Status
 STATUS_OK = "ok"
@@ -96,11 +105,31 @@ class TankDescription:
             return None
 
 
+def description_of(rsp: strx.ScanResponse, config_change_counter: int) -> Optional[TankDescription]:
+    """
+    Tank description a scan response carries in plaintext.
+
+    Args:
+        rsp: Scan response
+        config_change_counter: CONFIG_CHANGE_COUNTER the scan response belongs to
+
+    Returns:
+        TankDescription, None if the mode withholds it
+    """
+    volume = rsp.tank_volume_total
+    tank_type = None if rsp.tank_type == strx.TANK_TYPE_UNKNOWN else rsp.tank_type
+    in_window = rsp.beacon_mode == strx.BEACON_MED_SECURITY and (volume is not None or tank_type is not None)
+    if rsp.beacon_mode not in DESCRIPTION_PLAIN_MODES and not in_window:
+        return None
+    return TankDescription(volume, tank_type, config_change_counter)
+
+
 @dataclass
 class Result:
     """What the caller has to act on after one update."""
 
-    request_scan: bool = False
+    request_scan: bool = False  # scan response missing or out of date, keep asking
+    scan_now: bool = False  # something just changed, ask right away
     description_changed: bool = False
 
 
@@ -113,6 +142,11 @@ class STRxDevice:
     different counter, or while the counters went back (reboot, MESSAGE_COUNTER
     wrap) and no scan response with the new BOOT_COUNTER arrived yet. A stale
     scan response asks for an active scan and does not count MIC failures.
+
+    A scan response whose bytes change while the device is followed was just
+    received. The one in the first callback may be cached from long before, so
+    it is used to read the level but its tank description is only taken once
+    it is confirmed: CONFIRM_SECONDS of active scanning under one counter.
     """
 
     def __init__(self, name: str, key: Optional[bytes] = None,
@@ -135,25 +169,45 @@ class STRxDevice:
 
         self._rsp_bytes: Optional[bytes] = None
         self._rsp_ccc: Optional[int] = None
-        self._rsp_message: Optional[int] = None
+        self._rsp_confirmed = False
+        self._rsp_at: Optional[float] = None
         self._accepted_rsp_bytes: Optional[bytes] = None
         self._guard = strx.CounterGuard()
         self._mic_failures = 0
         self._failed_message: Optional[int] = None
 
+        self._last_heard: Optional[float] = None
+        self._adv_ccc: Optional[int] = None
+        self._ccc_since: Optional[float] = None
+        self._active_since: Optional[float] = None
+
     # Public interface
 
-    def update(self, service_data: Mapping[str, bytes]) -> Result:
+    def update(self, service_data: Mapping[str, bytes], now: float, active: bool = False) -> Result:
         """
         Take in the service data of one scanner callback.
 
         Args:
             service_data: Service data by UUID, either packet may be missing
+            now: Time the callback is handled, monotonic seconds
+            active: Whether the scanner that heard it scans actively right now
 
         Returns:
             Result the caller has to act on
         """
         result = Result()
+        first = self._last_heard is None
+        if not first and now - self._last_heard >= SILENCE_SECONDS:
+            _LOGGER.debug("%s: heard again after %.0f s", self.name, now - self._last_heard)
+            self._ccc_since = None
+            self._active_since = None
+            result.scan_now = True
+        self._last_heard = now
+        if active:
+            if self._active_since is None:
+                self._active_since = now
+        else:
+            self._active_since = None
 
         payload = service_data.get(strx.ADVERTISING_UUID)
         if payload is not None:
@@ -164,18 +218,30 @@ class STRxDevice:
 
         payload = service_data.get(strx.SCAN_RESPONSE_UUID)
         if payload is not None and bytes(payload) != self._rsp_bytes:
-            self._adopt_scan_response(bytes(payload), result)
+            self._adopt_scan_response(bytes(payload), now, fresh=not first, result=result)
 
-        if self.advertisement is not None:
-            self._process(self.advertisement, result)
+        adv = self.advertisement
+        if adv is not None:
+            self._follow_counter(adv, now, result)
+            self._confirm_if_due(adv, now, result)
+            self._process(adv, result)
+
+        if first and not self._rsp_confirmed:
+            result.scan_now = True
+        if result.scan_now:
+            result.request_scan = True
         return result
 
     @property
     def tank_description(self) -> Optional[TankDescription]:
         """Tank description valid for the current advertising packet, None if unknown."""
         adv = self.advertisement
-        if (self.description is None or adv is None
-                or self.description.config_change_counter != adv.config_change_counter):
+        if self.description is None:
+            return None
+        if adv is None:
+            # Nothing heard yet, the remembered description stands until a packet says otherwise
+            return self.description
+        if self.description.config_change_counter != adv.config_change_counter:
             return None
         return self.description
 
@@ -211,7 +277,7 @@ class STRxDevice:
 
     # Scan response
 
-    def _adopt_scan_response(self, payload: bytes, result: Result) -> None:
+    def _adopt_scan_response(self, payload: bytes, now: float, fresh: bool, result: Result) -> None:
         """Take a scan response whose bytes differ from the cached one."""
         if len(payload) > PROTOCOL_MAJOR_OFFSET and payload[PROTOCOL_MAJOR_OFFSET] != SUPPORTED_PROTOCOL_MAJOR:
             self._rsp_bytes = payload
@@ -227,48 +293,61 @@ class STRxDevice:
         self._rsp_bytes = payload
         self.protocol_major = rsp.protocol_major
         self.scan_response = rsp
+        self._rsp_confirmed = fresh
+        self._rsp_at = now
         self._mic_failures = 0
         self._failed_message = None
         self._bind_scan_response(self.advertisement, result)
-        _LOGGER.debug("%s: scan response %s, BOOT_COUNTER %d, CONFIG_CHANGE_COUNTER %s",
-                      self.name, strx.BEACON_MODE_NAMES.get(rsp.beacon_mode, rsp.beacon_mode),
+        _LOGGER.debug("%s: %s scan response %s, BOOT_COUNTER %d, CONFIG_CHANGE_COUNTER %s",
+                      self.name, "new" if fresh else "cached",
+                      strx.BEACON_MODE_NAMES.get(rsp.beacon_mode, rsp.beacon_mode),
                       rsp.boot_counter, self._rsp_ccc)
 
     def _bind_scan_response(self, adv: Optional[strx.Advertisement], result: Result) -> None:
-        """Bind the scan response to the CONFIG_CHANGE_COUNTER it arrived with."""
+        """Bind the scan response to the CONFIG_CHANGE_COUNTER of adv."""
         if adv is None:
             self._rsp_ccc = None
-            self._rsp_message = None
             return
         self._rsp_ccc = adv.config_change_counter
-        self._rsp_message = adv.message_counter
-        self._remember_description(result)
-
-    def _scan_response_matches(self, adv: strx.Advertisement, result: Result) -> bool:
-        """True if the scan response belongs to the CONFIG_CHANGE_COUNTER of adv."""
-        if adv.config_change_counter == self._rsp_ccc:
-            return True
-        # A scan response adopted moments ago arrived after an advertising packet the scanner missed
-        if (self._rsp_message is not None
-                and 0 <= adv.message_counter - self._rsp_message <= REBIND_MESSAGES):
-            self._rsp_ccc = adv.config_change_counter
-            self._rsp_message = None
+        if self._rsp_confirmed:
             self._remember_description(result)
-            return True
-        return False
+
+    def _follow_counter(self, adv: strx.Advertisement, now: float, result: Result) -> None:
+        """Note when CONFIG_CHANGE_COUNTER moves, a scan now finds what changed."""
+        ccc = adv.config_change_counter
+        if ccc != self._adv_ccc:
+            if self._adv_ccc is not None:
+                _LOGGER.debug("%s: CONFIG_CHANGE_COUNTER moved to %d", self.name, ccc)
+                result.scan_now = True
+            self._adv_ccc = ccc
+            self._ccc_since = now
+        elif self._ccc_since is None:
+            self._ccc_since = now
+
+    def _confirm_if_due(self, adv: strx.Advertisement, now: float, result: Result) -> None:
+        """Take the scan response as current once active scanning had time to replace it."""
+        if self.scan_response is None or self._active_since is None or self._ccc_since is None:
+            return
+        if now - max(self._active_since, self._ccc_since) < CONFIRM_SECONDS:
+            return
+        if self._rsp_ccc == adv.config_change_counter:
+            if self._rsp_confirmed:
+                return
+        elif self._rsp_at is None or self._rsp_at < self._ccc_since - REBIND_SECONDS:
+            # Every change of the counter changes the scan response, so one older than
+            # the change is not its scan response: that one is still to come
+            return
+        _LOGGER.debug("%s: scan response confirmed for CONFIG_CHANGE_COUNTER %d",
+                      self.name, adv.config_change_counter)
+        self._rsp_confirmed = True
+        self._bind_scan_response(adv, result)
 
     def _remember_description(self, result: Result) -> None:
         """Keep the tank description of the scan response if it carries one in plaintext."""
-        rsp = self.scan_response
-        if rsp is None or self._rsp_ccc is None:
+        if self.scan_response is None or self._rsp_ccc is None:
             return
-        volume = rsp.tank_volume_total
-        tank_type = None if rsp.tank_type == strx.TANK_TYPE_UNKNOWN else rsp.tank_type
-        in_window = rsp.beacon_mode == strx.BEACON_MED_SECURITY and (volume is not None or tank_type is not None)
-        if rsp.beacon_mode not in DESCRIPTION_PLAIN_MODES and not in_window:
-            return
-        description = TankDescription(volume, tank_type, self._rsp_ccc)
-        if description != self.description:
+        description = description_of(self.scan_response, self._rsp_ccc)
+        if description is not None and description != self.description:
             self.description = description
             result.description_changed = True
 
@@ -289,7 +368,7 @@ class STRxDevice:
         if self._rsp_ccc is None:
             self._bind_scan_response(adv, result)
 
-        config_changed = not self._scan_response_matches(adv, result)
+        config_changed = adv.config_change_counter != self._rsp_ccc
         last = self._guard.last
         regressed = last is not None and (rsp.boot_counter, adv.message_counter) < last
         if regressed and not rsp.encrypted and not config_changed:
@@ -304,9 +383,10 @@ class STRxDevice:
         if self.stale:
             result.request_scan = True
             if not was_stale:
+                result.scan_now = True
                 _LOGGER.debug("%s: %s, waiting for a new scan response", self.name,
                               "counters restarted" if outdated else
-                              f"CONFIG_CHANGE_COUNTER moved to {adv.config_change_counter}")
+                              f"scan response is for CONFIG_CHANGE_COUNTER {self._rsp_ccc}")
         if outdated:
             self.status = STATUS_WAITING_SCAN_RESPONSE
             return
@@ -331,6 +411,10 @@ class STRxDevice:
             return
 
         if not rsp.encrypted:
+            if not self._rsp_confirmed:
+                # A cached scan response may say Open while the device encrypts by now
+                self._set(None, STATUS_WAITING_SCAN_RESPONSE)
+                return
             level = int.from_bytes(adv.level_bytes, "little")
             if level > LEVEL_MAX and level != strx.LEVEL_INVALID:
                 _LOGGER.debug("%s: plaintext LEVEL %d out of range, ignored", self.name, level)
@@ -355,7 +439,8 @@ class STRxDevice:
 
     def _mic_failed(self, adv: strx.Advertisement) -> None:
         """Count a failed tag, ask for the key once failures persist."""
-        if self.stale:
+        if self.stale or not self._rsp_confirmed:
+            # The scan response may predate a reboot or a mode change, the key is not to blame yet
             self.status = STATUS_WAITING_SCAN_RESPONSE
             return
         if adv.message_counter != self._failed_message:

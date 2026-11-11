@@ -11,6 +11,10 @@ CONF_TANK = "tank"
 # Seconds the config flow waits for a scan response
 SCAN_RESPONSE_TIMEOUT = 10
 
+# Seconds since the last advertisement after which the device counts as not broadcasting,
+# it advertises at least every 250 ms unless the app is connected to it
+BROADCAST_STALE_SECONDS = 5
+
 # Active scan asked for when the scan response is out of date: duration and minimum spacing, seconds
 ACTIVE_SCAN_DURATION = 10
 ACTIVE_SCAN_INTERVAL = 30
