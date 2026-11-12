@@ -1,6 +1,7 @@
 {
   "domain": "simarine_strx",
   "name": "Simarine STRx",
+  "after_dependencies": ["frontend", "http"],
   "bluetooth": [
     {
       "service_data_uuid": "ea4a9703-a497-42a7-a177-f5a0b3214a0e",
@@ -20,5 +21,5 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Simarine/ha-simarine-strx/issues",
   "requirements": [],
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

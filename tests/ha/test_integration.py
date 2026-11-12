@@ -381,3 +381,16 @@ async def test_manual_tank_description(hass):
     assert entry.options[CONF_MANUAL_VOLUME] == 400
     assert state(hass, "total") == "unknown"
     assert state(hass, "volume") == "unknown"
+
+
+async def test_tank_card_served(hass, hass_client):
+    hass.config.components.add("frontend")
+    with patch("homeassistant.components.frontend.add_extra_js_url") as add_js:
+        await add_entry(hass)
+    add_js.assert_called_once()
+    assert add_js.call_args.args[1].startswith("/simarine_strx/simarine-tank-card.js?v=")
+
+    client = await hass_client()
+    response = await client.get("/simarine_strx/simarine-tank-card.js")
+    assert response.status == 200
+    assert 'customElements.define(CARD, SimarineTankCard)' in await response.text()

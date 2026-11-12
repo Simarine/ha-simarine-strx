@@ -69,6 +69,27 @@ the device's entry under **Settings → Devices & services → Simarine STRx →
 | Broadcast status | OK, or why there is no level, like Encryption key needed (diagnostic) |
 | Signal strength  | RSSI in dBm (diagnostic, disabled by default)                         |
 
+### Dashboard card
+
+The integration brings a **Simarine tank** card. The tank is the display: filled to its level, colored
+by tank type, with the level in % and the volume in liters written inside it and a liter scale along
+its side. A dot in the corner shows the broadcast status.
+
+The card does not appear by itself: the automatic Overview dashboard and the device page only use the
+cards of Home Assistant. Add it to a dashboard you edit, for example a new one from **Settings →
+Dashboards → Add dashboard**. Edit the dashboard, add a card and search for *Simarine tank*, or add it
+in YAML:
+
+```yaml
+type: custom:simarine-tank-card
+entity: sensor.str2_8179_level   # Level sensor of the meter
+name: Fresh water                # optional, the device name otherwise
+```
+
+The fill colors come from the theme variables `simarine-tank-fresh-water`, `simarine-tank-gray-water`,
+`simarine-tank-black-water`, `simarine-tank-fuel` and `simarine-tank-other`. After updating the
+integration, reload the browser page to get the new card.
+
 ### Changing the mode or the key
 
 - **Switching to a Security mode, Regenerate Encryption Key, factory reset:** Home Assistant asks for

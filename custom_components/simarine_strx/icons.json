@@ -1,0 +1,55 @@
+{
+  "entity": {
+    "sensor": {
+      "level": {
+        "default": "mdi:gauge",
+        "range": {
+          "0": "mdi:gauge-empty",
+          "15": "mdi:gauge-low",
+          "40": "mdi:gauge",
+          "85": "mdi:gauge-full"
+        }
+      },
+      "volume": {
+        "default": "mdi:storage-tank"
+      },
+      "tank_volume_total": {
+        "default": "mdi:storage-tank-outline"
+      },
+      "tank_type": {
+        "default": "mdi:storage-tank",
+        "state": {
+          "other": "mdi:storage-tank",
+          "fresh_water": "mdi:water",
+          "gray_water": "mdi:water-opacity",
+          "black_water": "mdi:toilet",
+          "fuel": "mdi:gas-station"
+        }
+      },
+      "broadcast_mode": {
+        "default": "mdi:broadcast",
+        "state": {
+          "off": "mdi:broadcast-off",
+          "high_security": "mdi:shield-lock",
+          "medium_security": "mdi:shield-half-full",
+          "low_security": "mdi:shield-outline",
+          "open": "mdi:lock-open-variant"
+        }
+      },
+      "status": {
+        "default": "mdi:information-outline",
+        "state": {
+          "ok": "mdi:check-circle-outline",
+          "waiting_scan_response": "mdi:timer-sand",
+          "no_measurement": "mdi:help-circle-outline",
+          "broadcast_off": "mdi:broadcast-off",
+          "key_needed": "mdi:key-alert",
+          "key_rejected": "mdi:key-remove",
+          "downgrade_rejected": "mdi:shield-alert",
+          "unsupported_protocol": "mdi:update",
+          "unknown_mode": "mdi:help-circle-outline"
+        }
+      }
+    }
+  }
+}
